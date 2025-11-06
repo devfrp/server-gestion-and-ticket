@@ -235,7 +235,14 @@ const commands = [
             required: true
         }
     ]
-}
+},
+    {
+    name: 'config-boutique',
+    description: 'configuration boutique'
+    options: [
+    {
+        
+    },
 ];
 
 // Enregistrer les commandes slash dans Discord  
