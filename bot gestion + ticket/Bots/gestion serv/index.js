@@ -1,48 +1,60 @@
-// Require the necessary discord.js classes  
 const { Client, Events, GatewayIntentBits, PermissionsBitField, EmbedBuilder, REST, Routes } = require('discord.js');
 const { token, clientId, guildId } = require('./config.json');
 const fs = require('fs');
 
-// Chargement des données existantes
+// ===== CHARGEMENT DES DONNÉES PERSISTANTES =====
 let levels = {};
 try { levels = require('./levels.json'); } catch (e) { levels = {}; }
 
-let deletedMessages = [];
-
-// Charger ou initialiser les informations économiques 
-let economy = { daily: 100, monthly: 500 }; // Sommes par défaut  
 let usersEconomy = {};
-let roleLevels = {}; // Pour stocker les rôles de niveaux  
-let games = {}; // Pour stocker l'état des jeux  
-let giveaways = {}; // Pour stocker l'état des giveaways
-let shop = {}; // <-- boutique par guild
-
-// Tenter de charger économie (balances) et roles et boutique
 try {
     const economyData = fs.readFileSync('./économie.json', 'utf8');
     usersEconomy = JSON.parse(economyData);
 } catch (err) {
-    console.log('Aucune donnée économique trouvée, initialisation avec des valeurs par défaut.');
+    console.log('Aucune donnée économique trouvée.');
     usersEconomy = {};
 }
 
+let roleLevels = {};
 try {
     const roleData = fs.readFileSync('./roles.json', 'utf8');
     roleLevels = JSON.parse(roleData);
 } catch (err) {
-    console.log('Aucune donnée de rôle trouvée, initialisation avec des valeurs par défaut.');
+    console.log('Aucune donnée de rôle trouvée.');
     roleLevels = {};
 }
 
+let shop = {};
 try {
     const shopData = fs.readFileSync('./boutique.json', 'utf8');
     shop = JSON.parse(shopData);
 } catch (err) {
-    console.log('Aucune donnée de boutique trouvée, initialisation vide.');
+    console.log('Aucune donnée de boutique trouvée.');
     shop = {};
 }
 
-// Create a new client instance  
+let giveaways = {};
+try {
+    const giveawaysData = fs.readFileSync('./giveaways.json', 'utf8');
+    giveaways = JSON.parse(giveawaysData);
+} catch (err) {
+    console.log('Aucune donnée de giveaway trouvée.');
+    giveaways = {};
+}
+
+let regulations = {};
+try {
+    const regulationsData = fs.readFileSync('./regulations.json', 'utf8');
+    regulations = JSON.parse(regulationsData);
+} catch (err) {
+    console.log('Aucune donnée de règlement trouvée.');
+    regulations = {};
+}
+
+let deletedMessages = [];
+let economy = { daily: 100, monthly: 500 };
+
+// ===== CLIENT DISCORD =====
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -53,35 +65,88 @@ const client = new Client({
     ] 
 });
 
-// Helpers
+// ===== HELPERS & UTILS =====
 function createEmbed(title, description, color = 0x00AE86) {
     return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
 }
+
 function logInteraction(username, content) {
     const timestamp = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
     const logMessage = `[${timestamp}] ${username}: ${content}\n`;
     fs.appendFileSync('logs.txt', logMessage);
     console.log(logMessage);
 }
-function saveShop() {
-    fs.writeFileSync('./boutique.json', JSON.stringify(shop, null, 2));
-}
-function saveEconomyFile() {
+
+function saveAllData() {
+    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
     fs.writeFileSync('./économie.json', JSON.stringify(usersEconomy, null, 2));
+    fs.writeFileSync('./roles.json', JSON.stringify(roleLevels, null, 2));
+    fs.writeFileSync('./boutique.json', JSON.stringify(shop, null, 2));
+    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+    fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
 }
 
-// When the client is ready, run this code (only once).
-client.once(Events.ClientReady, readyClient => {
-    console.log(`Prêt ! ${readyClient.user.tag} est en service !`);
-});
+function getRandomWinners(participants, count) {
+    const shuffled = participants.slice().sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, count).map(userId => `<@${userId}>`);
+}
 
-// Événement pour gagner de l'XP en envoyant des messages
-client.on(Events.MessageCreate, message => {
-    if (message.author.bot) return; // Ignorer les messages des bots
-    addXP(message.author.id, 15, message.channel);
-});
+function addXP(userID, xpToAdd, channel) {
+    if (!levels[userID]) levels[userID] = { xp: 0, level: 1 };
+    levels[userID].xp += xpToAdd;
+    let xpNeeded = levels[userID].level * 100;
+    if (levels[userID].xp >= xpNeeded) {
+        levels[userID].level++;
+        levels[userID].xp = 0;
+        if (channel) channel.send({ embeds: [createEmbed('Niveau Supérieur!', `<@${userID}> est maintenant niveau ${levels[userID].level}!`)] });
+    }
+    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+}
 
-// Register commands  
+function getLeaderboard() {
+    let leaderboard = Object.entries(levels).map(([id, data]) => ({ id, ...data }));
+    leaderboard.sort((a, b) => (b.level === a.level) ? b.xp - a.xp : b.level - a.level);
+    return leaderboard.slice(0, 10);
+}
+
+async function finishGiveaway(messageId) {
+    if (!giveaways[messageId]) return;
+    
+    const giveaway = giveaways[messageId];
+    if (giveaway.role) return; // c'est un règlement, pas un giveaway
+    
+    const winnerList = giveaway.participants.length > 0 
+        ? getRandomWinners(giveaway.participants, giveaway.winnersCount) 
+        : ['Aucun gagnant !'];
+    
+    try {
+        const allGuilds = client.guilds.cache;
+        for (const guild of allGuilds.values()) {
+            for (const channel of guild.channels.cache.values()) {
+                if (!channel.isTextBased()) continue;
+                try {
+                    const msg = await channel.messages.fetch(messageId).catch(() => null);
+                    if (msg) {
+                        await channel.send({
+                            embeds: [createEmbed('Concours Terminé', `🎉 **Concours terminé !** 🎉\n\nObjet à gagner : ${giveaway.prize}\nGagnants : ${winnerList.join(', ')}`)]
+                        });
+                        fs.writeFileSync('giveaway-enter.txt', giveaway.participants.join('\n'));
+                        delete giveaways[messageId];
+                        fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                        return;
+                    }
+                } catch (e) { }
+            }
+        }
+    } catch (err) {
+        console.error('Erreur finishGiveaway:', err);
+    }
+    
+    delete giveaways[messageId];
+    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+}
+
+// ===== COMMANDES SLASH =====
 const commands = [
     { name: 'ping', description: 'Affiche le ping du bot.' },
     { name: 'snipe', description: 'Affiche le dernier message supprimé (admins seulement).' },
@@ -150,8 +215,6 @@ const commands = [
             { type: 8, name: 'role', description: 'Le rôle à attribuer aux utilisateurs qui réagissent.', required: true }
         ]
     },
-
-    // ----- BOUTIQUE : commandes ajoutées -----
     {
         name: 'config-boutique',
         description: 'Ajoute un article en boutique (Admin uniquement).',
@@ -162,29 +225,42 @@ const commands = [
         ]
     },
     { name: 'boutique', description: 'Affiche la boutique du serveur.' },
-    {
-        name: 'acheter',
-        description: 'Achetez un article par son index.',
-        options: [
-            { type: 4, name: 'index', description: 'Index de l\'article (voir /boutique)', required: true }
-        ]
-    },
-    // ----- fin boutique -----
+    { name: 'acheter', description: 'Achetez un article par son index.', options: [{ type: 4, name: 'index', description: 'Index de l\'article (voir /boutique)', required: true }] },
 ];
 
-// Enregistrer les commandes slash dans Discord  
+// ===== ENREGISTREMENT DES COMMANDES =====
 const rest = new REST({ version: '9' }).setToken(token);
 (async () => {
     try {
-        console.log('Début de l\'enregistrement des commandes slash...');
+        console.log('Enregistrement des commandes slash...');
         await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-        console.log('Commandes slash enregistrées avec succès.');
+        console.log('Commandes slash enregistrées.');
     } catch (error) {
-        console.error(error);
+        console.error('Erreur enregistrement commandes:', error);
     }
 })();
 
-// Event to track deleted messages  
+// ===== ÉVÉNEMENTS CLIENT =====
+client.once(Events.ClientReady, readyClient => {
+    console.log(`Prêt ! ${readyClient.user.tag} est en service !`);
+    
+    // Reconnecter les giveaways qui se terminent
+    Object.entries(giveaways).forEach(([msgId, giveaway]) => {
+        if (giveaway.endTime && !giveaway.role) {
+            const timeLeft = giveaway.endTime - Date.now();
+            if (timeLeft > 0) {
+                console.log(`Reconnecter giveaway ${msgId}, temps restant: ${timeLeft}ms`);
+                setTimeout(() => finishGiveaway(msgId), timeLeft);
+            }
+        }
+    });
+});
+
+client.on(Events.MessageCreate, message => {
+    if (message.author.bot) return;
+    addXP(message.author.id, 15, message.channel);
+});
+
 client.on(Events.MessageDelete, message => {
     if (message.partial) return;
     deletedMessages.unshift(message);
@@ -192,7 +268,7 @@ client.on(Events.MessageDelete, message => {
     if (message.author) logInteraction(message.author.tag, `Message supprimé: ${message.content}`);
 });
 
-// Handle interactions  
+// ===== INTERACTIONS (SLASH COMMANDS) =====
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options } = interaction;
@@ -200,267 +276,249 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
         switch (commandName) {
             case 'ping': {
-                const sentMessage = await interaction.reply({ embeds: [createEmbed('Ping', 'Calcul en cours...')], fetchReply: true });
+                const sentMessage = await interaction.reply({ embeds: [createEmbed('Ping', 'Calcul...')], fetchReply: true });
                 const ping = sentMessage.createdTimestamp - interaction.createdTimestamp;
-                await interaction.editReply({ embeds: [createEmbed('Ping', `🏓 Le ping du bot est de **${ping} ms**.`)] });
+                await interaction.editReply({ embeds: [createEmbed('Ping', `🏓 ${ping} ms`)] });
                 break;
             }
 
             case 'salon-reset': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Permission ManageMessages requise.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 const channel = interaction.channel;
                 const fetchedMessages = await channel.messages.fetch({ limit: 100 });
-                await channel.bulkDelete(fetchedMessages, true).catch(error => console.error('Erreur bulkDelete:', error));
-                await interaction.reply({ embeds: [createEmbed('Succès', 'Tous les messages dans ce salon ont été supprimés.')] });
+                await channel.bulkDelete(fetchedMessages, true).catch(err => console.error('bulkDelete error:', err));
+                await interaction.reply({ embeds: [createEmbed('Succès', 'Messages supprimés.')] });
                 break;
             }
 
             case 'send-embed': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 await interaction.deferReply({ ephemeral: true });
-                const embedTitle = options.getString('title');
-                const embedMessage = options.getString('message').replace(/\\n/g, '\n');
-                const customEmbed = new EmbedBuilder().setColor(0x00AE86).setTitle(embedTitle).setDescription(embedMessage).setTimestamp();
-                await interaction.channel.send({ embeds: [customEmbed] });
-                await interaction.editReply({ embeds: [createEmbed('Succès', 'L\'embed a été envoyé avec succès.')] });
+                const title = options.getString('title');
+                const msg = options.getString('message').replace(/\\n/g, '\n');
+                await interaction.channel.send({ embeds: [new EmbedBuilder().setTitle(title).setDescription(msg).setColor(0x00AE86).setTimestamp()] });
+                await interaction.editReply({ embeds: [createEmbed('Succès', 'Embed envoyé.')] });
                 break;
             }
 
             case 'ban': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const userToBan = options.getUser('user');
-                const reasonBan = options.getString('reason') || 'Aucune raison spécifiée';
-                const memberToBan = await interaction.guild.members.fetch(userToBan.id).catch(() => null);
-                if (memberToBan) {
-                    await memberToBan.ban({ reason: reasonBan });
-                    await interaction.reply({ embeds: [createEmbed('Bannissement', `${userToBan.tag} a été banni pour la raison suivante : ${reasonBan}`)] });
+                const user = options.getUser('user');
+                const reason = options.getString('reason') || 'Aucune raison';
+                const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+                if (member) {
+                    await member.ban({ reason });
+                    await interaction.reply({ embeds: [createEmbed('Ban', `${user.tag} banni : ${reason}`)] });
                 } else {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur non trouvé.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur introuvable.', 0xff0000)], ephemeral: true });
                 }
                 break;
             }
 
             case 'mute': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const userToMute = options.getUser('user');
-                const durationMute = options.getInteger('duration');
-                const reasonMute = options.getString('reason') || 'Aucune raison spécifiée';
-                const memberToMute = await interaction.guild.members.fetch(userToMute.id).catch(() => null);
-                if (memberToMute) {
-                    const muteRole = interaction.guild.roles.cache.find(role => role.name === 'Muted');
-                    if (!muteRole) {
-                        await interaction.reply({ embeds: [createEmbed('Erreur', 'Rôle "Muted" non trouvé.', 0xff0000)], ephemeral: true });
-                        return;
-                    }
-                    await memberToMute.roles.add(muteRole, reasonMute);
-                    await interaction.reply({ embeds: [createEmbed('Mute', `${userToMute.tag} a été mute pour la raison suivante : ${reasonMute}`)] });
-                    setTimeout(async () => {
-                        try {
-                            const refreshed = await interaction.guild.members.fetch(userToMute.id);
-                            if (refreshed.roles.cache.has(muteRole.id)) {
-                                await refreshed.roles.remove(muteRole, 'Mute terminé');
-                                await interaction.channel.send({ embeds: [createEmbed('Unmute', `${userToMute.tag} a été unmute.`)] });
-                            }
-                        } catch (err) { console.error('Erreur unmute', err); }
-                    }, durationMute * 60 * 1000);
-                } else {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur non trouvé.', 0xff0000)], ephemeral: true });
+                const user = options.getUser('user');
+                const duration = options.getInteger('duration');
+                const reason = options.getString('reason') || 'Aucune raison';
+                const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+                if (!member) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur introuvable.', 0xff0000)], ephemeral: true });
+                    return;
                 }
+                const muteRole = interaction.guild.roles.cache.find(r => r.name === 'Muted');
+                if (!muteRole) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Rôle Muted manquant.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                await member.roles.add(muteRole, reason);
+                await interaction.reply({ embeds: [createEmbed('Mute', `${user.tag} mute : ${reason}`)] });
+                setTimeout(async () => {
+                    try {
+                        const refreshed = await interaction.guild.members.fetch(user.id);
+                        if (refreshed.roles.cache.has(muteRole.id)) {
+                            await refreshed.roles.remove(muteRole, 'Mute terminé');
+                        }
+                    } catch (err) { console.error('unmute error:', err); }
+                }, duration * 60 * 1000);
                 break;
             }
 
             case 'unmute': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const userToUnmute = options.getUser('user');
-                const memberToUnmute = await interaction.guild.members.fetch(userToUnmute.id).catch(() => null);
-                if (memberToUnmute) {
-                    const muteRole = interaction.guild.roles.cache.find(role => role.name === 'Muted');
-                    if (!muteRole) {
-                        await interaction.reply({ embeds: [createEmbed('Erreur', 'Rôle "Muted" non trouvé.', 0xff0000)], ephemeral: true });
-                        return;
-                    }
-                    if (memberToUnmute.roles.cache.has(muteRole.id)) {
-                        await memberToUnmute.roles.remove(muteRole, 'Unmute command');
-                        await interaction.reply({ embeds: [createEmbed('Unmute', `${userToUnmute.tag} a été unmute.`)] });
-                    } else {
-                        await interaction.reply({ embeds: [createEmbed('Erreur', `${userToUnmute.tag} n'est pas mute.`, 0xff0000)], ephemeral: true });
-                    }
+                const user = options.getUser('user');
+                const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+                if (!member) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur introuvable.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const muteRole = interaction.guild.roles.cache.find(r => r.name === 'Muted');
+                if (!muteRole) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Rôle Muted manquant.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                if (member.roles.cache.has(muteRole.id)) {
+                    await member.roles.remove(muteRole);
+                    await interaction.reply({ embeds: [createEmbed('Unmute', `${user.tag} unmute.`)] });
                 } else {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Utilisateur non trouvé.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', `${user.tag} n'est pas mute.`, 0xff0000)], ephemeral: true });
                 }
                 break;
             }
 
             case 'level': {
                 await interaction.deferReply();
-                const userLevelID = interaction.user.id;
-                if (!levels[userLevelID]) levels[userLevelID] = { xp: 0, level: 1 };
-                const xpNeeded = levels[userLevelID].level * 100;
-                const currentXP = levels[userLevelID].xp;
-                const currentLevel = levels[userLevelID].level;
-                const levelEmbed = new EmbedBuilder()
+                const uid = interaction.user.id;
+                if (!levels[uid]) levels[uid] = { xp: 0, level: 1 };
+                const xpNeeded = levels[uid].level * 100;
+                const embed = new EmbedBuilder()
                     .setColor(0x00AE86)
-                    .setTitle(`Niveau de ${interaction.user.username}`)
-                    .setDescription(`📊 **Niveau**: ${currentLevel}\n✨ **XP**: ${currentXP}/${xpNeeded}\n🎯 **Prochain niveau**: ${xpNeeded - currentXP} XP restants`)
+                    .setTitle(`Niveau ${interaction.user.username}`)
+                    .setDescription(`📊 Niveau: ${levels[uid].level}\n✨ XP: ${levels[uid].xp}/${xpNeeded}\n🎯 Reste: ${xpNeeded - levels[uid].xp} XP`)
                     .setTimestamp();
-                await interaction.editReply({ embeds: [levelEmbed] });
+                await interaction.editReply({ embeds: [embed] });
                 break;
             }
 
             case 'leaderboard': {
-                const leaderboard = getLeaderboard();
-                let leaderboardMessage = '🏆 **Leaderboard des niveaux** 🏆\n\n';
-                leaderboard.forEach((user, index) => {
-                    leaderboardMessage += `${index + 1}. <@${user.id}> - Niveau ${user.level} (${user.xp} XP)\n`;
-                });
-                await interaction.reply({ embeds: [createEmbed('Leaderboard', leaderboardMessage)] });
+                const lb = getLeaderboard();
+                let txt = '';
+                lb.forEach((u, i) => { txt += `${i + 1}. <@${u.id}> — Lvl ${u.level} (${u.xp} XP)\n`; });
+                await interaction.reply({ embeds: [createEmbed('Leaderboard', txt || 'Aucun')] });
                 break;
             }
 
             case 'envoyer': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const messageToSend = options.getString('message');
-                await interaction.channel.send(messageToSend);
-                await interaction.reply({ embeds: [createEmbed('Message envoyé', 'Le message a été envoyé avec succès.')], ephemeral: true });
+                const msg = options.getString('message');
+                await interaction.channel.send(msg);
+                await interaction.reply({ embeds: [createEmbed('Succès', 'Message envoyé.')] , ephemeral: true });
                 break;
             }
 
             case 'config-économie': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const dailyAmount = options.getInteger('daily');
-                const monthlyAmount = options.getInteger('monthly');
-                economy.daily = dailyAmount;
-                economy.monthly = monthlyAmount;
-                // Note : ce code sauvegarde l'objet economy dans économie.json (existant code)
+                economy.daily = options.getInteger('daily');
+                economy.monthly = options.getInteger('monthly');
                 fs.writeFileSync('./économie.json', JSON.stringify(economy, null, 2));
-                await interaction.reply({ embeds: [createEmbed('Configuration Économie', `Montants configurés:\n- Quotidien: ${dailyAmount}\n- Mensuel: ${monthlyAmount}`)] });
+                await interaction.reply({ embeds: [createEmbed('Config Économie', `Daily: ${economy.daily}\nMonthly: ${economy.monthly}`)] });
                 break;
             }
 
             case 'daily': {
-                const userDailyID = interaction.user.id;
-                if (!usersEconomy[userDailyID]) usersEconomy[userDailyID] = { lastDaily: 0, lastMonthly: 0, balance: 0 };
-                const nowDaily = Date.now();
-                const dailyCooldown = 86400000;
-                if (nowDaily - usersEconomy[userDailyID].lastDaily < dailyCooldown) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez attendre 24 heures avant de réclamer votre récompense quotidienne.', 0xff0000)], ephemeral: true });
+                const uid = interaction.user.id;
+                if (!usersEconomy[uid]) usersEconomy[uid] = { lastDaily: 0, lastMonthly: 0, balance: 0 };
+                const now = Date.now();
+                if (now - usersEconomy[uid].lastDaily < 86400000) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Attendre 24h.', 0xff0000)], ephemeral: true });
                 } else {
-                    usersEconomy[userDailyID].balance += economy.daily;
-                    usersEconomy[userDailyID].lastDaily = nowDaily;
+                    usersEconomy[uid].lastDaily = now;
+                    usersEconomy[uid].balance += economy.daily;
                     fs.writeFileSync('./économie.json', JSON.stringify(usersEconomy, null, 2));
-                    await interaction.reply({ embeds: [createEmbed('Succès', `Vous avez réclamé ${economy.daily} pièces pour votre récompense quotidienne!`)] });
+                    await interaction.reply({ embeds: [createEmbed('Succès', `+${economy.daily} pièces!`)] });
                 }
                 break;
             }
 
             case 'monthly': {
-                const userMonthlyID = interaction.user.id;
-                if (!usersEconomy[userMonthlyID]) usersEconomy[userMonthlyID] = { lastDaily: 0, lastMonthly: 0, balance: 0 };
-                const nowMonthly = Date.now();
-                const monthlyCooldown = 2592000000;
-                if (nowMonthly - usersEconomy[userMonthlyID].lastMonthly < monthlyCooldown) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez attendre 30 jours avant de réclamer votre récompense mensuelle.', 0xff0000)], ephemeral: true });
+                const uid = interaction.user.id;
+                if (!usersEconomy[uid]) usersEconomy[uid] = { lastDaily: 0, lastMonthly: 0, balance: 0 };
+                const now = Date.now();
+                if (now - usersEconomy[uid].lastMonthly < 2592000000) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Attendre 30j.', 0xff0000)], ephemeral: true });
                 } else {
-                    usersEconomy[userMonthlyID].balance += economy.monthly;
-                    usersEconomy[userMonthlyID].lastMonthly = nowMonthly;
+                    usersEconomy[uid].lastMonthly = now;
+                    usersEconomy[uid].balance += economy.monthly;
                     fs.writeFileSync('./économie.json', JSON.stringify(usersEconomy, null, 2));
-                    await interaction.reply({ embeds: [createEmbed('Succès', `Vous avez réclamé ${economy.monthly} pièces pour votre récompense mensuelle!`)] });
+                    await interaction.reply({ embeds: [createEmbed('Succès', `+${economy.monthly} pièces!`)] });
                 }
                 break;
             }
 
             case 'role-level': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 const lvl = options.getInteger('level');
-                const rl = options.getRole('role');
-                roleLevels[lvl] = rl.id;
+                const role = options.getRole('role');
+                roleLevels[lvl] = role.id;
                 fs.writeFileSync('./roles.json', JSON.stringify(roleLevels, null, 2));
-                await interaction.reply({ embeds: [createEmbed('Rôle Défini', `Le rôle <@&${rl.id}> a été défini pour le niveau ${lvl}.`)] });
+                await interaction.reply({ embeds: [createEmbed('Rôle Défini', `Lvl ${lvl} → <@&${role.id}>`)] });
                 break;
             }
 
             case 'giveaway': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 const prize = options.getString('prize');
                 const winnersCount = options.getInteger('winners');
                 const duration = options.getInteger('duration') * 60000;
-                const giveawayMessage = await interaction.reply({
-                    embeds: [createEmbed('Concours', `🎉 **Concours !** 🎉\n\nObjet à gagner : ${prize}\nNombre de gagnants : ${winnersCount}\nDurée : ${options.getInteger('duration')} minutes\n\nRéagissez à ce message pour participer !`)],
+                const msg = await interaction.reply({
+                    embeds: [createEmbed('Concours', `🎉 **Concours !** 🎉\n\nPrix: ${prize}\nGagnants: ${winnersCount}\nDurée: ${options.getInteger('duration')}min\n\nRéagissez 🎉 pour participer!`)],
                     fetchReply: true
                 });
-                await giveawayMessage.react('🎉');
-                giveaways[giveawayMessage.id] = { prize, winnersCount, participants: [], endTime: Date.now() + duration };
-                setTimeout(async () => {
-                    if (giveaways[giveawayMessage.id]) {
-                        const giveaway = giveaways[giveawayMessage.id];
-                        const winnerList = giveaway.participants.length > 0 ? getRandomWinners(giveaway.participants, giveaway.winnersCount) : ['Aucun gagnant !'];
-                        fs.writeFileSync('giveaway-enter.txt', giveaway.participants.join('\n'));
-                        await interaction.channel.send({ embeds: [createEmbed('Concours Terminé', `🎉 **Concours terminé !** 🎉\n\nObjet à gagner : ${giveaway.prize}\nGagnants : ${winnerList.join(', ')}`)] });
-                        fs.truncate('giveaway-enter.txt', 0, () => {});
-                        delete giveaways[giveawayMessage.id];
-                    }
-                }, duration);
+                await msg.react('🎉');
+                giveaways[msg.id] = { prize, winnersCount, participants: [], endTime: Date.now() + duration, guildId: interaction.guild.id, channelId: interaction.channel.id };
+                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                setTimeout(() => finishGiveaway(msg.id), duration);
                 break;
             }
 
             case 'règlement': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Vous devez être un administrateur pour utiliser cette commande.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 await interaction.deferReply();
-                const ruleContent = options.getString('content').replace(/\\n/g, '\n');
-                const roleToAssign = options.getRole('role');
-                const ruleEmbed = new EmbedBuilder().setColor(0x00AE86).setTitle('Règlement').setDescription(ruleContent).setFooter({ text: 'Réagissez avec ✅ pour accepter le règlement' }).setTimestamp();
-                const ruleMessage = await interaction.channel.send({ embeds: [ruleEmbed] });
-                await ruleMessage.react('✅');
-                giveaways[ruleMessage.id] = { participants: [], role: { id: roleToAssign.id, name: roleToAssign.name } };
-                await interaction.editReply({ embeds: [createEmbed('Succès', 'Le règlement a été envoyé avec succès.')] });
+                const content = options.getString('content').replace(/\\n/g, '\n');
+                const role = options.getRole('role');
+                const ruleEmbed = new EmbedBuilder().setColor(0x00AE86).setTitle('Règlement').setDescription(content).setFooter({ text: 'Réagissez ✅ pour accepter' }).setTimestamp();
+                const msg = await interaction.channel.send({ embeds: [ruleEmbed] });
+                await msg.react('✅');
+                giveaways[msg.id] = { role: { id: role.id, name: role.name }, guildId: interaction.guild.id };
+                regulations[msg.id] = { roleId: role.id, guildId: interaction.guild.id };
+                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
+                await interaction.editReply({ embeds: [createEmbed('Succès', 'Règlement envoyé.')] });
                 break;
             }
 
-            // ====== BOUTIQUE ======
             case 'config-boutique': {
-                // réservé aux administrateurs
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Seuls les administrateurs peuvent configurer la boutique.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
                 }
-                const roleObj = options.getRole('role');
+                const role = options.getRole('role');
                 const price = options.getInteger('price');
-                const name = options.getString('name') || roleObj.name;
+                const name = options.getString('name') || role.name;
                 const gid = interaction.guild.id;
                 if (!shop[gid]) shop[gid] = [];
-                shop[gid].push({ id: roleObj.id, name, price });
-                saveShop();
-                await interaction.reply({ embeds: [createEmbed('Boutique', `Article ajouté : **${name}** — Rôle: <@&${roleObj.id}> — Prix: ${price} pièces`)] });
+                shop[gid].push({ id: role.id, name, price });
+                fs.writeFileSync('./boutique.json', JSON.stringify(shop, null, 2));
+                await interaction.reply({ embeds: [createEmbed('Boutique', `Article ajouté: **${name}** (${price} pièces)`)] });
                 break;
             }
 
@@ -468,13 +526,13 @@ client.on(Events.InteractionCreate, async interaction => {
                 const gid = interaction.guild.id;
                 const items = shop[gid] || [];
                 if (items.length === 0) {
-                    await interaction.reply({ embeds: [createEmbed('Boutique', 'Aucun article disponible pour le moment.')], ephemeral: false });
+                    await interaction.reply({ embeds: [createEmbed('Boutique', 'Vide.')] });
                     return;
                 }
-                const embed = new EmbedBuilder().setTitle('Boutique du serveur').setColor(0x00AE86).setTimestamp();
+                const embed = new EmbedBuilder().setTitle('Boutique').setColor(0x00AE86);
                 let desc = '';
-                items.forEach((it, idx) => { desc += `**${idx + 1}. ${it.name}**\nRôle: <@&${it.id}>\nPrix: ${it.price} pièces\n\n`; });
-                embed.setDescription(desc).setFooter({ text: 'Achetez avec /acheter <index>' });
+                items.forEach((it, idx) => { desc += `**${idx + 1}. ${it.name}**\n<@&${it.id}> — ${it.price} 💰\n\n`; });
+                embed.setDescription(desc).setFooter({ text: 'Achetez: /acheter <index>' });
                 await interaction.reply({ embeds: [embed] });
                 break;
             }
@@ -484,14 +542,14 @@ client.on(Events.InteractionCreate, async interaction => {
                 const gid = interaction.guild.id;
                 const items = shop[gid] || [];
                 if (!idx || idx < 1 || idx > items.length) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Index invalide.' , 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Index invalide.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 const item = items[idx - 1];
                 const uid = interaction.user.id;
                 if (!usersEconomy[uid]) usersEconomy[uid] = { lastDaily: 0, lastMonthly: 0, balance: 0 };
                 if (usersEconomy[uid].balance < item.price) {
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Fonds insuffisants pour cet achat.', 0xff0000)], ephemeral: true });
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Fonds insuffisants.', 0xff0000)], ephemeral: true });
                     return;
                 }
                 usersEconomy[uid].balance -= item.price;
@@ -500,93 +558,74 @@ client.on(Events.InteractionCreate, async interaction => {
                     const member = await interaction.guild.members.fetch(uid);
                     const roleObj = await interaction.guild.roles.fetch(item.id);
                     if (member && roleObj) {
-                        await member.roles.add(roleObj, 'Achat boutique');
-                        await interaction.reply({ embeds: [createEmbed('Achat réussi', `Vous avez acheté **${item.name}** pour ${item.price} pièces. Rôle ajouté : ${roleObj.name}`)] });
+                        await member.roles.add(roleObj, 'Achat');
+                        await interaction.reply({ embeds: [createEmbed('Succès', `Acheté: **${item.name}** pour ${item.price} 💰`)] });
                     } else {
-                        await interaction.reply({ embeds: [createEmbed('Achat', 'Achat enregistré mais rôle/membre introuvable. Vous avez été débité.')], ephemeral: true });
+                        await interaction.reply({ embeds: [createEmbed('Achat', 'Débité mais rôle/membre intro. Vous avez été débité.')] , ephemeral: true });
                     }
                 } catch (err) {
-                    console.error('Erreur achat:', err);
-                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Erreur lors de l\'attribution du rôle après achat.', 0xff0000)], ephemeral: true });
+                    console.error('Achat error:', err);
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Erreur achat.', 0xff0000)], ephemeral: true });
                 }
                 break;
             }
 
             default:
-                await interaction.reply({ embeds: [createEmbed('Erreur', 'Commande non implémentée.')], ephemeral: true });
-                break;
+                await interaction.reply({ embeds: [createEmbed('Erreur', 'Commande inconnue.')], ephemeral: true });
         }
     } catch (err) {
-        console.error('Erreur interaction:', err);
+        console.error('Interaction error:', err);
         if (!interaction.replied) await interaction.reply({ embeds: [createEmbed('Erreur', 'Une erreur est survenue.', 0xff0000)], ephemeral: true });
     }
 });
 
-// Handling message reaction for regulations & giveaways  
+// ===== RÉACTIONS (RÈGLEMENT + GIVEAWAY) =====
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
     if (reaction.partial) {
-        try { await reaction.fetch(); } catch (error) { console.error('Erreur fetch reaction', error); return; }
+        try { await reaction.fetch(); } catch (error) { console.error('Fetch reaction error:', error); return; }
     }
     if (user.bot) return;
 
-    if (reaction.emoji.name === '🎉' && giveaways[reaction.message.id]) {
+    // Giveaway participation
+    if (reaction.emoji.name === '🎉' && giveaways[reaction.message.id] && !giveaways[reaction.message.id].role) {
         const giveaway = giveaways[reaction.message.id];
         if (!giveaway.participants.includes(user.id)) {
             giveaway.participants.push(user.id);
-            fs.appendFileSync('giveaway-enter.txt', `${user.id}\n`);
-            const msg = await reaction.message.channel.send({ embeds: [createEmbed('Participation', `<@${user.id}> a participé au concours pour le prix : ${giveaway.prize}`)] });
+            fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+            const msg = await reaction.message.channel.send({ embeds: [createEmbed('Participation', `<@${user.id}> a participé!`)] });
             setTimeout(() => msg.delete().catch(() => {}), 5000);
         }
     }
 
-    if (reaction.emoji.name === '✅' && giveaways[reaction.message.id]) {
+    // Règlement acceptance
+    if (reaction.emoji.name === '✅' && regulations[reaction.message.id]) {
         try {
+            const regData = regulations[reaction.message.id];
             const member = await reaction.message.guild.members.fetch(user.id);
-            const giveawayData = giveaways[reaction.message.id];
-            if (!member || !giveawayData || !giveawayData.role) return;
-            const role = await reaction.message.guild.roles.fetch(giveawayData.role.id);
-            if (!role) return;
+            const role = await reaction.message.guild.roles.fetch(regData.roleId);
+            
+            if (!member || !role) return;
+            
             if (!member.roles.cache.has(role.id)) {
                 await member.roles.add(role);
-                const conf = await reaction.message.channel.send({ embeds: [createEmbed('Règlement accepté', `<@${user.id}> a accepté le règlement et reçu le rôle ${role.name}`)] });
+                const conf = await reaction.message.channel.send({ embeds: [createEmbed('✅ Accepté', `<@${user.id}> a accepté le règlement → ${role.name}`)] });
                 setTimeout(() => conf.delete().catch(() => {}), 5000);
             }
         } catch (err) {
-            console.error('Erreur attribution rôle règlement', err);
+            console.error('Règlement error:', err);
         }
     }
 });
 
-// Fonction pour obtenir un nombre aléatoire de gagnants  
-function getRandomWinners(participants, count) {
-    const shuffled = participants.slice().sort(() => 0.5 - Math.random());
-    return shuffled.slice(0, count).map(userId => `<@${userId}>`);
-}
-
-// Function to add XP and update levels  
-function addXP(userID, xpToAdd, channel) {
-    if (!levels[userID]) levels[userID] = { xp: 0, level: 1 };
-    levels[userID].xp += xpToAdd;
-    let xpNeeded = levels[userID].level * 100;
-    if (levels[userID].xp >= xpNeeded) {
-        levels[userID].level++;
-        levels[userID].xp = 0;
-        if (channel) channel.send({ embeds: [createEmbed('Niveau Supérieur!', `<@${userID}> est maintenant niveau ${levels[userID].level}!`)] });
-    }
-    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
-}
-
-// Function to get the leaderboard  
-function getLeaderboard() {
-    let leaderboard = Object.entries(levels).map(([id, data]) => ({ id, ...data }));
-    leaderboard.sort((a, b) => (b.level === a.level) ? b.xp - a.xp : b.level - a.level);
-    return leaderboard.slice(0, 10);
-}
-
-// Save levels data on exit  
+// ===== SAUVEGARDE À LA FERMETURE =====
 process.on('exit', () => {
-    try { fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2)); } catch (e) { console.error(e); }
+    try { saveAllData(); console.log('Données sauvegardées.'); } catch (e) { console.error('Save error:', e); }
 });
 
-// Log in to Discord with your client's token  
+process.on('SIGINT', () => {
+    try { saveAllData(); console.log('Données sauvegardées avant fermeture.'); } catch (e) { console.error('Save error:', e); }
+    process.exit(0);
+});
+
+// ===== LOGIN =====
 client.login(token);
