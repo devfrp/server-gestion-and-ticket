@@ -65,7 +65,6 @@ const client = new Client({
     ] 
 });
 
-// ===== HELPERS & UTILS =====
 function createEmbed(title, description, color = 0x00AE86) {
     return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
 }
@@ -627,5 +626,5 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-// ===== LOGIN =====
+
 client.login(token);
