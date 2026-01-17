@@ -84,5 +84,3 @@ Voici la liste complète des commandes slash disponibles :
 - `index.js` : Code principal du bot.
 - Dossiers pour les données JSON.
 
-## Licence
-ISC
