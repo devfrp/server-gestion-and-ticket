@@ -2,9 +2,8 @@ const { Client, Events, GatewayIntentBits, PermissionsBitField, EmbedBuilder, RE
 const { token, clientId, guildId } = require('./config.json');
 const fs = require('fs');
 
-// ===== CHARGEMENT DES DONNÉES PERSISTANTES =====
 let levels = {};
-try { levels = require('./levels.json'); } catch (e) { levels = {}; }
+try { levels = require('./niveaux.json'); } catch (e) { levels = {}; }
 
 let usersEconomy = {};
 try {
@@ -16,7 +15,7 @@ try {
 }
 
 let economy = {};
-try { economy = require('./economy.json'); } catch (e) { economy = { daily: 100, monthly: 500 }; }
+try { economy = require('./config_economie.json'); } catch (e) { economy = { daily: 100, monthly: 500 }; }
 
 let roleLevels = {};
 try {
@@ -38,7 +37,7 @@ try {
 
 let giveaways = {};
 try {
-    const giveawaysData = fs.readFileSync('./giveaways.json', 'utf8');
+    const giveawaysData = fs.readFileSync('./concours.json', 'utf8');
     giveaways = JSON.parse(giveawaysData);
 } catch (err) {
     console.log('Aucune donnée de giveaway trouvée.');
@@ -47,7 +46,7 @@ try {
 
 let regulations = {};
 try {
-    const regulationsData = fs.readFileSync('./regulations.json', 'utf8');
+    const regulationsData = fs.readFileSync('./reglements.json', 'utf8');
     regulations = JSON.parse(regulationsData);
 } catch (err) {
     console.log('Aucune donnée de règlement trouvée.');
@@ -55,14 +54,17 @@ try {
 }
 
 let levelAnnounceChannel = {};
-try { levelAnnounceChannel = require('./levelAnnounceChannel.json'); } catch (e) { levelAnnounceChannel = {}; }
+try { levelAnnounceChannel = require('./salonAnnonceNiveau.json'); } catch (e) { levelAnnounceChannel = {}; }
 
 let xpMultipliers = {};
-try { xpMultipliers = require('./xpMultipliers.json'); } catch (e) { xpMultipliers = {}; }
+try { xpMultipliers = require('./multiplicateurs_xp.json'); } catch (e) { xpMultipliers = {}; }
 
 let deletedMessages = [];
+ 
+let birthdays = {};
+try { birthdays = require('./anniversaires.json'); } catch (e) { birthdays = {}; }
 
-// ===== CLIENT DISCORD =====
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -85,15 +87,60 @@ function logInteraction(username, content) {
 }
 
 function saveAllData() {
-    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+    fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
     fs.writeFileSync('./économie.json', JSON.stringify(usersEconomy, null, 2));
-    fs.writeFileSync('./economy.json', JSON.stringify(economy, null, 2));
+    fs.writeFileSync('./config_economie.json', JSON.stringify(economy, null, 2));
     fs.writeFileSync('./roles.json', JSON.stringify(roleLevels, null, 2));
     fs.writeFileSync('./boutique.json', JSON.stringify(shop, null, 2));
-    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
-    fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
-    fs.writeFileSync('./levelAnnounceChannel.json', JSON.stringify(levelAnnounceChannel, null, 2));
-    fs.writeFileSync('./xpMultipliers.json', JSON.stringify(xpMultipliers, null, 2));
+    fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
+    fs.writeFileSync('./reglements.json', JSON.stringify(regulations, null, 2));
+    fs.writeFileSync('./salonAnnonceNiveau.json', JSON.stringify(levelAnnounceChannel, null, 2));
+    fs.writeFileSync('./multiplicateurs_xp.json', JSON.stringify(xpMultipliers, null, 2));
+    fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+}
+
+function parseDateString(dateStr) {
+    const parts = dateStr.split('/');
+    if (parts.length < 2) return null;
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    const year = parts[2] ? parseInt(parts[2], 10) : null;
+    if (Number.isNaN(day) || Number.isNaN(month)) return null;
+    if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+    return { day, month, year };
+}
+
+function formatDateObj(d) {
+    if (!d) return 'Inconnu';
+    return `${String(d.day).padStart(2, '0')}/${String(d.month).padStart(2, '0')}${d.year ? '/' + d.year : ''}`;
+}
+
+async function checkBirthdaysAndAnnounce() {
+    try {
+        const now = new Date();
+        const todayDay = now.getDate();
+        const todayMonth = now.getMonth() + 1;
+        for (const [gid, gdata] of Object.entries(birthdays)) {
+            if (!gdata || !gdata.users) continue;
+            const guild = client.guilds.cache.get(gid);
+            if (!guild) continue;
+            const announceChannelId = gdata.announceChannel;
+            if (!announceChannelId) continue;
+            const channel = guild.channels.cache.get(announceChannelId);
+            if (!channel || !channel.isTextBased()) continue;
+            const birthdayUsers = Object.entries(gdata.users).filter(([, dateObj]) => {
+                return dateObj && dateObj.day === todayDay && dateObj.month === todayMonth;
+            });
+            if (birthdayUsers.length === 0) continue;
+            let mentions = '';
+            for (const [uid] of birthdayUsers) {
+                mentions += `<@${uid}> `;
+            }
+            await channel.send({ embeds: [createEmbed('Joyeux anniversaire 🎉', `${mentions}\nBon anniversaire ! 🎂`)] });
+        }
+    } catch (err) {
+        console.error('Erreur checkBirthdaysAndAnnounce:', err);
+    }
 }
 
 function getRandomWinners(participants, count) {
@@ -102,7 +149,7 @@ function getRandomWinners(participants, count) {
 }
 
 function addXP(userID, xpToAdd, guildId, member = null) {
-    // Calculer le multiplicateur
+    
     let multiplier = 1;
     if (member) {
         for (const role of member.roles.cache.values()) {
@@ -119,7 +166,7 @@ function addXP(userID, xpToAdd, guildId, member = null) {
     if (levels[userID].xp >= xpNeeded) {
         levels[userID].level++;
         levels[userID].xp = 0;
-        // Envoyer dans le salon configuré ou dans le channel actuel
+        
         let announceChannel = null;
         if (levelAnnounceChannel[guildId]) {
             const guild = client.guilds.cache.get(guildId);
@@ -129,7 +176,7 @@ function addXP(userID, xpToAdd, guildId, member = null) {
             announceChannel.send({ embeds: [createEmbed('Niveau Supérieur!', `<@${userID}> est maintenant niveau ${levels[userID].level}!`)] });
         }
     }
-    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+    fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
 }
 
 function getLeaderboard() {
@@ -142,7 +189,7 @@ async function finishGiveaway(messageId) {
     if (!giveaways[messageId]) return;
     
     const giveaway = giveaways[messageId];
-    if (giveaway.role) return; // c'est un règlement, pas un giveaway
+    if (giveaway.role) return; 
     
     const winnerList = giveaway.participants.length > 0 
         ? getRandomWinners(giveaway.participants, giveaway.winnersCount) 
@@ -161,7 +208,7 @@ async function finishGiveaway(messageId) {
                         });
                         fs.writeFileSync('giveaway-enter.txt', giveaway.participants.join('\n'));
                         delete giveaways[messageId];
-                        fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                        fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
                         return;
                     }
                 } catch (e) { }
@@ -172,10 +219,9 @@ async function finishGiveaway(messageId) {
     }
     
     delete giveaways[messageId];
-    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+    fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
 }
 
-// ===== COMMANDES SLASH =====
 const commands = [
     { name: 'latence', description: 'Affiche la latence du bot.' },
     { name: 'espionner', description: 'Affiche le dernier message supprimé (admins seulement).' },
@@ -317,6 +363,28 @@ const commands = [
         ]
     },
     {
+        name: 'anniversaire-set',
+        description: 'Définit l\'anniversaire d\'un utilisateur (format DD/MM ou DD/MM/YYYY).',
+        options: [
+            { type: 6, name: 'utilisateur', description: 'Utilisateur (optionnel).', required: false },
+            { type: 3, name: 'date', description: 'Date (DD/MM ou DD/MM/YYYY).', required: true }
+        ]
+    },
+    {
+        name: 'anniversaire-remove',
+        description: 'Supprime l\'anniversaire d\'un utilisateur.',
+        options: [ { type: 6, name: 'utilisateur', description: 'Utilisateur (optionnel).', required: false } ]
+    },
+    {
+        name: 'anniversaire-prochain',
+        description: 'Affiche les prochains anniversaires du serveur.'
+    },
+    {
+        name: 'config-anniv-salon',
+        description: 'Définit le salon d\'annonces d\'anniversaire (Admin uniquement).',
+        options: [ { type: 7, name: 'salon', description: 'Salon pour annonces.', required: true } ]
+    },
+    {
         name: 'retirer-xp-global',
         description: 'Retirer de l\'XP à tous les utilisateurs (Admin uniquement).',
         options: [
@@ -344,7 +412,7 @@ const commands = [
     }
 ];
 
-// ===== ENREGISTREMENT DES COMMANDES =====
+
 const rest = new REST({ version: '9' }).setToken(token);
 (async () => {
     try {
@@ -356,11 +424,10 @@ const rest = new REST({ version: '9' }).setToken(token);
     }
 })();
 
-// ===== ÉVÉNEMENTS CLIENT =====
 client.once(Events.ClientReady, readyClient => {
     console.log(`Prêt ! ${readyClient.user.tag} est en service !`);
     
-    // Reconnecter les giveaways qui se terminent
+    
     Object.entries(giveaways).forEach(([msgId, giveaway]) => {
         if (giveaway.endTime && !giveaway.role) {
             const timeLeft = giveaway.endTime - Date.now();
@@ -370,6 +437,10 @@ client.once(Events.ClientReady, readyClient => {
             }
         }
     });
+    
+    checkBirthdaysAndAnnounce();
+    
+    setInterval(() => checkBirthdaysAndAnnounce(), 1000 * 60 * 60);
 });
 
 client.on(Events.MessageCreate, message => {
@@ -384,7 +455,7 @@ client.on(Events.MessageDelete, message => {
     if (message.author) logInteraction(message.author.tag, `Message supprimé: ${message.content}`);
 });
 
-// ===== INTERACTIONS (SLASH COMMANDS) =====
+
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options } = interaction;
@@ -550,7 +621,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 }
                 economy.daily = options.getInteger('quotidien');
                 economy.monthly = options.getInteger('mensuel');
-                fs.writeFileSync('./economy.json', JSON.stringify(economy, null, 2));
+                fs.writeFileSync('./config_economie.json', JSON.stringify(economy, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Config Économie', `Daily: ${economy.daily}\nMonthly: ${economy.monthly}`)] });
                 break;
             }
@@ -614,7 +685,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
                 await msg.react('🎉');
                 giveaways[msg.id] = { prize, winnersCount, participants: [], endTime: Date.now() + duration, guildId: interaction.guild.id, channelId: interaction.channel.id };
-                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
                 setTimeout(() => finishGiveaway(msg.id), duration);
                 break;
             }
@@ -632,8 +703,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 await msg.react('✅');
                 giveaways[msg.id] = { role: { id: role.id, name: role.name }, guildId: interaction.guild.id };
                 regulations[msg.id] = { roleId: role.id, guildId: interaction.guild.id };
-                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
-                fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
+                fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
+                fs.writeFileSync('./reglements.json', JSON.stringify(regulations, null, 2));
                 await interaction.editReply({ embeds: [createEmbed('Succès', 'Règlement envoyé.')] });
                 break;
             }
@@ -776,11 +847,11 @@ client.on(Events.InteractionCreate, async interaction => {
                     return;
                 }
                 levels[user.id].xp -= amount;
-                // Ajuster level si nécessaire
+                
                 while (levels[user.id].level > 1 && levels[user.id].xp < (levels[user.id].level - 1) * 100) {
                     levels[user.id].level--;
                 }
-                fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+                fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Succès', `-${amount} XP à <@${user.id}>`)] });
                 break;
             }
@@ -798,8 +869,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 }
                 if (!levels[user.id]) levels[user.id] = { xp: 0, level: 1 };
                 levels[user.id].level = newLevel;
-                levels[user.id].xp = newLevel * 100; // Set XP to the start of the level
-                fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+                levels[user.id].xp = newLevel * 100; 
+                fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Succès', `Niveau de <@${user.id}> défini à ${newLevel}`)] });
                 break;
             }
@@ -893,7 +964,6 @@ client.on(Events.InteractionCreate, async interaction => {
                         if (!levels[member.id]) levels[member.id] = { xp: 0, level: 1 };
                         if (levels[member.id].xp >= amount) {
                             levels[member.id].xp -= amount;
-                            // Ajuster level si nécessaire
                             while (levels[member.id].level > 1 && levels[member.id].xp < (levels[member.id].level - 1) * 100) {
                                 levels[member.id].level--;
                             }
@@ -901,7 +971,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         }
                     }
                 }
-                fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+                fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Succès', `-${amount} XP retirés à ${count} utilisateurs.`)] });
                 break;
             }
@@ -917,7 +987,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     return;
                 }
                 levelAnnounceChannel[interaction.guild.id] = channel.id;
-                fs.writeFileSync('./levelAnnounceChannel.json', JSON.stringify(levelAnnounceChannel, null, 2));
+                fs.writeFileSync('./salonAnnonceNiveau.json', JSON.stringify(levelAnnounceChannel, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Succès', `Salon d'annonces défini à ${channel}.`)] });
                 break;
             }
@@ -934,8 +1004,79 @@ client.on(Events.InteractionCreate, async interaction => {
                     return;
                 }
                 xpMultipliers[role.id] = multiplier;
-                fs.writeFileSync('./xpMultipliers.json', JSON.stringify(xpMultipliers, null, 2));
+                fs.writeFileSync('./multiplicateurs_xp.json', JSON.stringify(xpMultipliers, null, 2));
                 await interaction.reply({ embeds: [createEmbed('Succès', `Multiplicateur d'XP pour ${role.name} défini à ${multiplier}x.`)] });
+                break;
+            }
+
+            case 'anniversaire-set': {
+                const target = options.getUser('utilisateur') || interaction.user;
+                const dateStr = options.getString('date');
+                const parsed = parseDateString(dateStr);
+                if (!parsed) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Format de date invalide. Utilisez DD/MM ou DD/MM/YYYY.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const gid = interaction.guild.id;
+                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: birthdays[gid] ? birthdays[gid].announceChannel : undefined };
+                birthdays[gid].users[target.id] = parsed;
+                fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+                await interaction.reply({ embeds: [createEmbed('Anniversaire défini', `${target.tag || target.username} → ${formatDateObj(parsed)}`)] });
+                break;
+            }
+
+            case 'anniversaire-remove': {
+                const target = options.getUser('utilisateur') || interaction.user;
+                const gid = interaction.guild.id;
+                if (!birthdays[gid] || !birthdays[gid].users || !birthdays[gid].users[target.id]) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Aucun anniversaire trouvé pour cet utilisateur.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                delete birthdays[gid].users[target.id];
+                fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+                await interaction.reply({ embeds: [createEmbed('Anniversaire supprimé', `Anniversaire de ${target.tag || target.username} supprimé.`)] });
+                break;
+            }
+
+            case 'anniversaire-prochain': {
+                const gid = interaction.guild.id;
+                if (!birthdays[gid] || !birthdays[gid].users) {
+                    await interaction.reply({ embeds: [createEmbed('Aucun anniversaire', 'Aucun anniversaire enregistré pour ce serveur.')], ephemeral: true });
+                    return;
+                }
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const list = [];
+                for (const [uid, d] of Object.entries(birthdays[gid].users)) {
+                    if (!d) continue;
+                    let next = new Date(currentYear, d.month - 1, d.day);
+                    if (next < today) next = new Date(currentYear + 1, d.month - 1, d.day);
+                    list.push({ uid, next, dateObj: d });
+                }
+                list.sort((a, b) => a.next - b.next);
+                const top = list.slice(0, 10);
+                let txt = '';
+                top.forEach((it, i) => { txt += `${i + 1}. <@${it.uid}> — ${formatDateObj(it.dateObj)} (${it.next.toLocaleDateString('fr-FR')})\n`; });
+                await interaction.reply({ embeds: [createEmbed('Prochains anniversaires', txt || 'Aucun')] });
+                break;
+            }
+
+            case 'config-anniv-salon': {
+                if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const channel = options.getChannel('salon');
+                if (!channel.isTextBased()) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Salon texte requis.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const gid = interaction.guild.id;
+                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: channel.id };
+                else birthdays[gid].announceChannel = channel.id;
+                fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+                await interaction.reply({ embeds: [createEmbed('Succès', `Salon d'anniversaire défini à ${channel}.`)] });
                 break;
             }
 
@@ -978,25 +1119,25 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// ===== RÉACTIONS (RÈGLEMENT + GIVEAWAY) =====
+
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
     if (reaction.partial) {
         try { await reaction.fetch(); } catch (error) { console.error('Fetch reaction error:', error); return; }
     }
     if (user.bot) return;
 
-    // Giveaway participation
+    
     if (reaction.emoji.name === '🎉' && giveaways[reaction.message.id] && !giveaways[reaction.message.id].role) {
         const giveaway = giveaways[reaction.message.id];
         if (!giveaway.participants.includes(user.id)) {
             giveaway.participants.push(user.id);
-            fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+            fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
             const msg = await reaction.message.channel.send({ embeds: [createEmbed('Participation', `<@${user.id}> a participé!`)] });
             setTimeout(() => msg.delete().catch(() => {}), 5000);
         }
     }
 
-    // Règlement acceptance
+    
     if (reaction.emoji.name === '✅' && regulations[reaction.message.id]) {
         try {
             const regData = regulations[reaction.message.id];
@@ -1015,14 +1156,11 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
         }
     }
 });
-
-// ===== BUTTONS (TICKETS) =====
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
     if (interaction.customId === 'open_ticket') {
         try {
-            // Vérifier si l'utilisateur a déjà un ticket
             const existingTicket = interaction.guild.channels.cache.find(
                 channel => channel.name === `ticket-${interaction.user.id}`
             );
@@ -1034,7 +1172,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
-            // Créer un salon de ticket
             const ticketChannel = await interaction.guild.channels.create({
                 name: `ticket-${interaction.user.id}`,
                 type: ChannelType.GuildText,
@@ -1064,7 +1201,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 ]
             });
 
-            // Créer le bouton de fermeture
             const closeButton = new ButtonBuilder()
                 .setCustomId('close_ticket')
                 .setLabel('Fermer le ticket')
@@ -1073,7 +1209,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const row = new ActionRowBuilder()
                 .addComponents(closeButton);
 
-            // Message de bienvenue dans le ticket
             const ticketEmbed = new EmbedBuilder()
                 .setColor(0x0099FF)
                 .setTitle(`Ticket de ${interaction.user.tag}`)
@@ -1115,7 +1250,6 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// ===== SAUVEGARDE À LA FERMETURE =====
 process.on('exit', () => {
     try { saveAllData(); console.log('Données sauvegardées.'); } catch (e) { console.error('Save error:', e); }
 });

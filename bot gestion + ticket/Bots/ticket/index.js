@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, Events, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { token, clientId, guildId } = require('./config.json');
 
-// Créez une instance de client  
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -10,12 +10,12 @@ const client = new Client({
     ]
 });
 
-// Quand le client est prêt, exécutez ce code (une seule fois)
+
 client.once(Events.ClientReady, () => {
     console.log(`Prêt ! ${client.user.tag} est en service !`);
 });
 
-// Enregistrer la commande slash pour créer un ticket  
+
 const commands = [
     {
         name: 'ticket-create',
@@ -35,13 +35,13 @@ const rest = new REST({ version: '10' }).setToken(token);
     }
 })();
 
-// Gérer les interactions  
+
 client.on(Events.InteractionCreate, async interaction => {
-    // Vérifiez si l'interaction est une commande  
+    
     if (interaction.isCommand()) {
         const { commandName } = interaction;
 
-        // Commande pour créer un ticket  
+        
         if (commandName === 'ticket-create') {
             const hasAdminRole = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -73,7 +73,7 @@ client.on(Events.InteractionCreate, async interaction => {
     } else if (interaction.isButton()) {
         if (interaction.customId === 'open_ticket') {
             try {
-                // Vérifier si l'utilisateur a déjà un ticket
+                
                 const existingTicket = interaction.guild.channels.cache.find(
                     channel => channel.name === `ticket-${interaction.user.id}`
                 );
@@ -85,7 +85,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     });
                 }
 
-                // Créer un salon de ticket
+                
                 const ticketChannel = await interaction.guild.channels.create({
                     name: `ticket-${interaction.user.id}`,
                     type: ChannelType.GuildText,
@@ -115,7 +115,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     ]
                 });
 
-                // Créer le bouton de fermeture
+                
                 const closeButton = new ButtonBuilder()
                     .setCustomId('close_ticket')
                     .setLabel('Fermer le ticket')
@@ -124,7 +124,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const row = new ActionRowBuilder()
                     .addComponents(closeButton);
 
-                // Message de bienvenue dans le ticket
+                
                 const ticketEmbed = new EmbedBuilder()
                     .setColor(0x0099FF)
                     .setTitle(`Ticket de ${interaction.user.tag}`)
@@ -167,5 +167,5 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Connectez-vous à Discord avec votre token  
+
 client.login(token);

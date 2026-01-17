@@ -2,9 +2,9 @@ const { Client, Events, GatewayIntentBits, PermissionsBitField, EmbedBuilder, RE
 const { token, clientId, guildId } = require('./config.json');
 const fs = require('fs');
 
-// ===== CHARGEMENT DES DONNÉES PERSISTANTES =====
+
 let levels = {};
-try { levels = require('./levels.json'); } catch (e) { levels = {}; }
+try { levels = require('./niveaux.json'); } catch (e) { levels = {}; }
 
 let usersEconomy = {};
 try {
@@ -35,7 +35,7 @@ try {
 
 let giveaways = {};
 try {
-    const giveawaysData = fs.readFileSync('./giveaways.json', 'utf8');
+    const giveawaysData = fs.readFileSync('./concours.json', 'utf8');
     giveaways = JSON.parse(giveawaysData);
 } catch (err) {
     console.log('Aucune donnée de giveaway trouvée.');
@@ -44,7 +44,7 @@ try {
 
 let regulations = {};
 try {
-    const regulationsData = fs.readFileSync('./regulations.json', 'utf8');
+    const regulationsData = fs.readFileSync('./reglements.json', 'utf8');
     regulations = JSON.parse(regulationsData);
 } catch (err) {
     console.log('Aucune donnée de règlement trouvée.');
@@ -54,7 +54,7 @@ try {
 let deletedMessages = [];
 let economy = { daily: 100, monthly: 500 };
 
-// ===== CLIENT DISCORD =====
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -77,12 +77,12 @@ function logInteraction(username, content) {
 }
 
 function saveAllData() {
-    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+    fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
     fs.writeFileSync('./économie.json', JSON.stringify(usersEconomy, null, 2));
     fs.writeFileSync('./roles.json', JSON.stringify(roleLevels, null, 2));
     fs.writeFileSync('./boutique.json', JSON.stringify(shop, null, 2));
-    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
-    fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
+    fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
+    fs.writeFileSync('./reglements.json', JSON.stringify(regulations, null, 2));
 }
 
 function getRandomWinners(participants, count) {
@@ -99,7 +99,7 @@ function addXP(userID, xpToAdd, channel) {
         levels[userID].xp = 0;
         if (channel) channel.send({ embeds: [createEmbed('Niveau Supérieur!', `<@${userID}> est maintenant niveau ${levels[userID].level}!`)] });
     }
-    fs.writeFileSync('./levels.json', JSON.stringify(levels, null, 2));
+    fs.writeFileSync('./niveaux.json', JSON.stringify(levels, null, 2));
 }
 
 function getLeaderboard() {
@@ -112,7 +112,7 @@ async function finishGiveaway(messageId) {
     if (!giveaways[messageId]) return;
     
     const giveaway = giveaways[messageId];
-    if (giveaway.role) return; // c'est un règlement, pas un giveaway
+    if (giveaway.role) return; 
     
     const winnerList = giveaway.participants.length > 0 
         ? getRandomWinners(giveaway.participants, giveaway.winnersCount) 
@@ -131,7 +131,7 @@ async function finishGiveaway(messageId) {
                         });
                         fs.writeFileSync('giveaway-enter.txt', giveaway.participants.join('\n'));
                         delete giveaways[messageId];
-                        fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                        fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
                         return;
                     }
                 } catch (e) { }
@@ -142,10 +142,10 @@ async function finishGiveaway(messageId) {
     }
     
     delete giveaways[messageId];
-    fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+    fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
 }
 
-// ===== COMMANDES SLASH =====
+
 const commands = [
     { name: 'ping', description: 'Affiche le ping du bot.' },
     { name: 'snipe', description: 'Affiche le dernier message supprimé (admins seulement).' },
@@ -227,7 +227,7 @@ const commands = [
     { name: 'acheter', description: 'Achetez un article par son index.', options: [{ type: 4, name: 'index', description: 'Index de l\'article (voir /boutique)', required: true }] },
 ];
 
-// ===== ENREGISTREMENT DES COMMANDES =====
+
 const rest = new REST({ version: '9' }).setToken(token);
 (async () => {
     try {
@@ -239,11 +239,11 @@ const rest = new REST({ version: '9' }).setToken(token);
     }
 })();
 
-// ===== ÉVÉNEMENTS CLIENT =====
+
 client.once(Events.ClientReady, readyClient => {
     console.log(`Prêt ! ${readyClient.user.tag} est en service !`);
     
-    // Reconnecter les giveaways qui se terminent
+    
     Object.entries(giveaways).forEach(([msgId, giveaway]) => {
         if (giveaway.endTime && !giveaway.role) {
             const timeLeft = giveaway.endTime - Date.now();
@@ -267,7 +267,7 @@ client.on(Events.MessageDelete, message => {
     if (message.author) logInteraction(message.author.tag, `Message supprimé: ${message.content}`);
 });
 
-// ===== INTERACTIONS (SLASH COMMANDS) =====
+
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options } = interaction;
@@ -481,7 +481,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
                 await msg.react('🎉');
                 giveaways[msg.id] = { prize, winnersCount, participants: [], endTime: Date.now() + duration, guildId: interaction.guild.id, channelId: interaction.channel.id };
-                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+                fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
                 setTimeout(() => finishGiveaway(msg.id), duration);
                 break;
             }
@@ -499,8 +499,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 await msg.react('✅');
                 giveaways[msg.id] = { role: { id: role.id, name: role.name }, guildId: interaction.guild.id };
                 regulations[msg.id] = { roleId: role.id, guildId: interaction.guild.id };
-                fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
-                fs.writeFileSync('./regulations.json', JSON.stringify(regulations, null, 2));
+                fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
+                fs.writeFileSync('./reglements.json', JSON.stringify(regulations, null, 2));
                 await interaction.editReply({ embeds: [createEmbed('Succès', 'Règlement envoyé.')] });
                 break;
             }
@@ -578,25 +578,25 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// ===== RÉACTIONS (RÈGLEMENT + GIVEAWAY) =====
+
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
     if (reaction.partial) {
         try { await reaction.fetch(); } catch (error) { console.error('Fetch reaction error:', error); return; }
     }
     if (user.bot) return;
 
-    // Giveaway participation
+    
     if (reaction.emoji.name === '🎉' && giveaways[reaction.message.id] && !giveaways[reaction.message.id].role) {
         const giveaway = giveaways[reaction.message.id];
         if (!giveaway.participants.includes(user.id)) {
             giveaway.participants.push(user.id);
-            fs.writeFileSync('./giveaways.json', JSON.stringify(giveaways, null, 2));
+            fs.writeFileSync('./concours.json', JSON.stringify(giveaways, null, 2));
             const msg = await reaction.message.channel.send({ embeds: [createEmbed('Participation', `<@${user.id}> a participé!`)] });
             setTimeout(() => msg.delete().catch(() => {}), 5000);
         }
     }
 
-    // Règlement acceptance
+    
     if (reaction.emoji.name === '✅' && regulations[reaction.message.id]) {
         try {
             const regData = regulations[reaction.message.id];
@@ -616,7 +616,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     }
 });
 
-// ===== SAUVEGARDE À LA FERMETURE =====
+
 process.on('exit', () => {
     try { saveAllData(); console.log('Données sauvegardées.'); } catch (e) { console.error('Save error:', e); }
 });

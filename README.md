@@ -21,7 +21,7 @@ Ce projet est un bot Discord combiné qui offre des fonctionnalités de gestion 
 
 ## Configuration
 - `config.json` : Contient le token, clientId et guildId.
-- Fichiers JSON pour les données persistantes : levels.json, économie.json, etc.
+ - Fichiers JSON pour les données persistantes : `niveaux.json`, `config_economie.json`, `anniversaires.json`, `concours.json`, `reglements.json`, `multiplicateurs_xp.json`, `salonAnnonceNiveau.json`, `économie.json`, `roles.json`.
 
 ## Utilisation
 Lancer le bot avec `node index.js` depuis le dossier combined.
@@ -55,6 +55,12 @@ Voici la liste complète des commandes slash disponibles :
 - `/role-niveau` : Définit un rôle pour un niveau spécifique (niveau et rôle, admin requis).
 - `/definir-salon-niveau` : Définir le salon pour les annonces de passage de niveau (salon, admin requis).
 - `/definir-multiplicateur-xp` : Définir le multiplicateur d'XP pour un rôle (rôle et multiplicateur ≥1, admin requis).
+
+### Anniversaires
+- `/anniversaire-set` : Enregistrer votre date d'anniversaire (format `JJ/MM` ou `JJ/MM/AAAA`).
+- `/anniversaire-remove` : Supprimer votre anniversaire enregistré.
+- `/anniversaire-prochain` : Affiche le prochain anniversaire enregistré sur le serveur.
+- `/config-anniv-salon` : Configurer le salon d'annonces d'anniversaire (admin requis).
 
 ### Gestion Utilisateurs (Admin uniquement)
 - `/ajouter-argent` : Ajouter de l'argent à un utilisateur (utilisateur et montant).
