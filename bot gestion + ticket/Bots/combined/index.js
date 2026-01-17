@@ -1040,9 +1040,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     return;
                 }
                 const gid = interaction.guild.id;
-                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: birthdays[gid] ? birthdays[gid].announceChannel : undefined };
+                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: null };
                 birthdays[gid].users[target.id] = parsed;
-                fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+                saveAllData();
                 await interaction.reply({ embeds: [createEmbed('Anniversaire défini', `${target.tag || target.username} → ${formatDateObj(parsed)}`)] });
                 break;
             }
