@@ -223,6 +223,7 @@ async function finishGiveaway(messageId) {
 }
 
 const commands = [
+    { name: 'help', description: 'Affiche l\'aide et la liste des commandes.' },
     { name: 'latence', description: 'Affiche la latence du bot.' },
     { name: 'espionner', description: 'Affiche le dernier message supprimé (admins seulement).' },
     {
@@ -462,6 +463,27 @@ client.on(Events.InteractionCreate, async interaction => {
 
     try {
         switch (commandName) {
+            case 'help': {
+                const helpEmbed = new EmbedBuilder()
+                    .setColor(0x00AE86)
+                    .setTitle('📚 AIDE — Commandes du bot')
+                    .setDescription('Voici toutes les commandes disponibles :')
+                    .addFields(
+                        { name: '🔧 MODÉRATION', value: '`/bannir` `/muter` `/demuter` `/salon-nettoyer` `/definir-salon-niveau`', inline: false },
+                        { name: '🎂 ANNIVERSAIRES', value: '`/anniversaire-set` `/anniversaire-remove` `/anniversaire-prochain` `/config-anniv-salon`', inline: false },
+                        { name: '💰 ÉCONOMIE', value: '`/quotidien` `/mensuel` `/ajouter-argent` `/retirer-argent` `/boutique` `/acheter` `/config-economie`', inline: false },
+                        { name: '🏆 NIVEAUX & XP', value: '`/niveau` `/classement` `/ajouter-xp` `/retirer-xp` `/definir-niveau` `/definir-multiplicateur-xp` `/ajouter-xp-global` `/retirer-xp-global`', inline: false },
+                        { name: '🎁 CONCOURS', value: '`/concours`', inline: false },
+                        { name: '🛒 BOUTIQUE', value: '`/config-boutique` `/boutique` `/acheter`', inline: false },
+                        { name: '📨 AUTRES', value: '`/envoyer-embed` `/envoyer-message` `/ticket-creer` `/espionner` `/latence`', inline: false }
+                    )
+                    .setFooter({ text: 'Utilisez /commande --help pour plus de détails' })
+                    .setTimestamp();
+
+                await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
+                break;
+            }
+
             case 'latence': {
                 const sentMessage = await interaction.reply({ embeds: [createEmbed('Ping', 'Calcul...')], fetchReply: true });
                 const ping = sentMessage.createdTimestamp - interaction.createdTimestamp;
