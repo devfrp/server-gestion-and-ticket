@@ -372,6 +372,14 @@ const commands = [
         ]
     },
     {
+        name: 'anniversaire-ajouter',
+        description: 'Ajoute/définit l\'anniversaire d\'un utilisateur (alias de anniversaire-set).',
+        options: [
+            { type: 6, name: 'utilisateur', description: 'Utilisateur (optionnel).', required: false },
+            { type: 3, name: 'date', description: 'Date (DD/MM ou DD/MM/YYYY).', required: true }
+        ]
+    },
+    {
         name: 'anniversaire-remove',
         description: 'Supprime l\'anniversaire d\'un utilisateur.',
         options: [ { type: 6, name: 'utilisateur', description: 'Utilisateur (optionnel).', required: false } ]
@@ -382,6 +390,11 @@ const commands = [
     },
     {
         name: 'config-anniv-salon',
+        description: 'Définit le salon d\'annonces d\'anniversaire (Admin uniquement).',
+        options: [ { type: 7, name: 'salon', description: 'Salon pour annonces.', required: true } ]
+    },
+    {
+        name: 'anniversaire-salon',
         description: 'Définit le salon d\'annonces d\'anniversaire (Admin uniquement).',
         options: [ { type: 7, name: 'salon', description: 'Salon pour annonces.', required: true } ]
     },
@@ -414,19 +427,37 @@ const commands = [
 ];
 
 
-const rest = new REST({ version: '9' }).setToken(token);
-(async () => {
-    try {
-        console.log('Enregistrement des commandes slash...');
-        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-        console.log('Commandes slash enregistrées.');
-    } catch (error) {
-        console.error('Erreur enregistrement commandes:', error);
-    }
-})();
+const rest = new REST({ version: '10' }).setToken(token);
 
-client.once(Events.ClientReady, readyClient => {
+async function deployNewGuildCommands() {
+    try {
+        console.log('Vérification des commandes existantes pour le guild...');
+        const existing = await rest.get(Routes.applicationGuildCommands(clientId, guildId));
+        const existingNames = new Set(existing.map(c => c.name));
+        const toCreate = commands.filter(c => !existingNames.has(c.name));
+        if (toCreate.length === 0) {
+            console.log('Aucune nouvelle commande à créer.');
+            return;
+        }
+        console.log(`Création de ${toCreate.length} nouvelle(s) commande(s)...`);
+        for (const cmd of toCreate) {
+            try {
+                const created = await rest.post(Routes.applicationGuildCommands(clientId, guildId), { body: cmd });
+                console.log('Créée:', created.name);
+            } catch (e) {
+                console.error('Erreur création commande', cmd.name, e);
+            }
+        }
+        console.log('Déploiement des nouvelles commandes terminé.');
+    } catch (error) {
+        console.error('Erreur déploiement commandes:', error);
+    }
+}
+
+client.once(Events.ClientReady, async readyClient => {
     console.log(`Prêt ! ${readyClient.user.tag} est en service !`);
+    // Déployer automatiquement les nouvelles commandes au démarrage (par-guild)
+    await deployNewGuildCommands();
     
     
     Object.entries(giveaways).forEach(([msgId, giveaway]) => {
@@ -470,7 +501,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     .setDescription('Voici toutes les commandes disponibles :')
                     .addFields(
                         { name: '🔧 MODÉRATION', value: '`/bannir` `/muter` `/demuter` `/salon-nettoyer` `/definir-salon-niveau`', inline: false },
-                        { name: '🎂 ANNIVERSAIRES', value: '`/anniversaire-set` `/anniversaire-remove` `/anniversaire-prochain` `/config-anniv-salon`', inline: false },
+                        { name: '🎂 ANNIVERSAIRES', value: '`/anniversaire-ajouter` `/anniversaire-remove` `/anniversaire-prochain` `/anniversaire-salon`', inline: false },
                         { name: '💰 ÉCONOMIE', value: '`/quotidien` `/mensuel` `/ajouter-argent` `/retirer-argent` `/boutique` `/acheter` `/config-economie`', inline: false },
                         { name: '🏆 NIVEAUX & XP', value: '`/niveau` `/classement` `/ajouter-xp` `/retirer-xp` `/definir-niveau` `/definir-multiplicateur-xp` `/ajouter-xp-global` `/retirer-xp-global`', inline: false },
                         { name: '🎁 CONCOURS', value: '`/concours`', inline: false },
@@ -1047,6 +1078,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 break;
             }
 
+            case 'anniversaire-ajouter': {
+                const target = options.getUser('utilisateur') || interaction.user;
+                const dateStr = options.getString('date');
+                const parsed = parseDateString(dateStr);
+                if (!parsed) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Format de date invalide. Utilisez DD/MM ou DD/MM/YYYY.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const gid = interaction.guild.id;
+                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: null };
+                birthdays[gid].users[target.id] = parsed;
+                saveAllData();
+                await interaction.reply({ embeds: [createEmbed('Anniversaire ajouté', `${target.tag || target.username} → ${formatDateObj(parsed)}`)] });
+                break;
+            }
+
             case 'anniversaire-remove': {
                 const target = options.getUser('utilisateur') || interaction.user;
                 const gid = interaction.guild.id;
@@ -1085,6 +1132,24 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             case 'config-anniv-salon': {
+                if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const channel = options.getChannel('salon');
+                if (!channel.isTextBased()) {
+                    await interaction.reply({ embeds: [createEmbed('Erreur', 'Salon texte requis.', 0xff0000)], ephemeral: true });
+                    return;
+                }
+                const gid = interaction.guild.id;
+                if (!birthdays[gid]) birthdays[gid] = { users: {}, announceChannel: channel.id };
+                else birthdays[gid].announceChannel = channel.id;
+                fs.writeFileSync('./anniversaires.json', JSON.stringify(birthdays, null, 2));
+                await interaction.reply({ embeds: [createEmbed('Succès', `Salon d'anniversaire défini à ${channel}.`)] });
+                break;
+            }
+
+            case 'anniversaire-salon': {
                 if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
                     await interaction.reply({ embeds: [createEmbed('Erreur', 'Admin requis.', 0xff0000)], ephemeral: true });
                     return;
